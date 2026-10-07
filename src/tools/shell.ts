@@ -30,6 +30,15 @@ interface ManagedProcess {
 const processes = new Map<string, ManagedProcess>();
 const MAX_LOG_CHARS = 400_000;
 
+export async function shutdownShellProcesses(): Promise<void> {
+  await Promise.all([...processes.values()].filter(p => p.child.exitCode === null && p.child.signalCode === null).map(p => new Promise<void>(resolve => {
+    if (process.platform === "win32" && p.child.pid) {
+      const killer = spawn("taskkill.exe", ["/PID", String(p.child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      killer.once("exit", () => resolve()); killer.once("error", () => resolve());
+    } else { p.child.kill("SIGTERM"); resolve(); }
+  })));
+}
+
 function appendLog(lines: string[], data: Buffer): void {
   lines.push(data.toString());
   let total = lines.reduce((sum, item) => sum + item.length, 0);

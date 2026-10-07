@@ -2,7 +2,6 @@
 
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import path from "path";
 import { randomUUID } from "crypto";
 
@@ -18,8 +17,11 @@ import {
   isInitializeRequest,
 } from "./lib/mcp-session-manager.js";
 import { initUpstreamManager } from "./lib/mcp-upstream-manager.js";
-import { startAdminServer } from "./admin/server.js";
-import { logMcpHttpEvent, logMcpRequest } from "./lib/activity-log.js";
+import { createAdminRouter } from "./admin/routes.js";
+import { dispatchRouter } from "./controller/ipc.js";
+import { shutdownShellProcesses } from "./tools/shell.js";
+import { redactText } from "./lib/redaction.js";
+import { logMcpHttpEvent, logMcpRequest, subscribeActivity } from "./lib/activity-log.js";
 import {
   buildInstructionContext,
   summarizeInstructionContext,
@@ -28,8 +30,9 @@ import {
 import { getChatGptToolProfile } from "./lib/tool-profile.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
-const HOST = process.env.HOST || "127.0.0.1";
+const HOST = "127.0.0.1";
 const MCP_TOKEN = (process.env.MCP_TOKEN || "").trim();
+if (!/^[A-Za-z0-9_-]{24,}$/.test(MCP_TOKEN)) throw new Error("MCP_TOKEN required: at least 24 URL-safe characters. Launch the controller to configure it.");
 const ADMIN_PORT = parseInt(process.env.ADMIN_PORT || "3001", 10);
 const SHELL_TIMEOUT = parseInt(process.env.SHELL_TIMEOUT || "120", 10);
 const SESSION_RECOVERY =
@@ -94,7 +97,19 @@ const sessionManager = createSessionManager({
 });
 
 const app = express();
-app.use(cors());
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+  // Browser calls are not required by MCP; reject origins to prevent local cross-site requests.
+  if (req.headers.origin) { res.status(403).json({ error: "Browser origins are not allowed" }); return; }
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  next();
+});
+app.use((req, res, next) => {
+  if (req.path !== "/health" && req.path !== `/${MCP_TOKEN}` && req.path !== `/mcp/${MCP_TOKEN}`) {
+    res.status(404).json({ error: "Not found" }); return;
+  }
+  next();
+});
 app.use(express.json({ limit: "50mb" }));
 // ChatGPT co the goi "/" hoac "/mcp" — ho tro ca hai.
 // Neu dat MCP_TOKEN, endpoint doi thanh "/<token>" + "/mcp/<token>" va cac path
@@ -138,7 +153,7 @@ app.use((req, res, next) => {
     }
 
     if (!isMcpRoute) {
-      console.log(`[HTTP] ${req.method} ${req.path} ${res.statusCode} ${duration}ms${sessionInfo}`);
+      console.log(redactText(`[HTTP] ${req.method} ${req.path} ${res.statusCode} ${duration}ms${sessionInfo}`));
     }
   });
   next();
@@ -155,18 +170,7 @@ if (MCP_TOKEN) {
 }
 
 app.get("/health", (_req, res) => {
-  res.json({
-    status: "ok",
-    name: "codex-mcp-server",
-    workspace: workspaceRoot,
-    defaultCwd: getDefaultCwd(),
-    fullMachineAccess: true,
-    fullDiskAccess: getFullDiskAccess(),
-    activeSessions: sessionManager.count(),
-    sessionRecovery: SESSION_RECOVERY,
-    mcpEndpoints: MCP_PATHS,
-    instructions: summarizeInstructionContext(instructionContext),
-  });
+  res.json({ status: "ok", name: "codex-mcp-server" });
 });
 
 async function handleMcpPost(req: express.Request, res: express.Response): Promise<void> {
@@ -288,7 +292,7 @@ for (const mcpPath of MCP_PATHS) {
 
 sessionManager.startCleanup();
 
-const adminServer = startAdminServer({
+const adminOptions = {
   port: ADMIN_PORT,
   host: "127.0.0.1",
   mcpPort: PORT,
@@ -297,6 +301,20 @@ const adminServer = startAdminServer({
   sessionCount: () => sessionManager.count(),
   instructionSummary: () => summarizeInstructionContext(instructionContext),
   instructionsPreview: () => instructionContext.instructionsText,
+};
+// Runtime never opens the admin HTTP port. Admin handlers use the controller's IPC channel.
+const ipcRouter = createAdminRouter(upstreamManager, adminOptions);
+subscribeActivity(entry => { if (process.connected) process.send?.({ type: "activity", data: entry }, () => {}); });
+process.on("message", async (message: any) => {
+  if (message?.type === "shutdown") { await shutdown(); return; }
+  if (message?.type !== "rpc" || !process.connected) return;
+  try {
+    let result;
+    if (message.url === "/internal/oauth/finish") result = { status: 200, data: await upstreamManager.finishOAuth(message.body.id, message.body.code, message.body.state) };
+    else if ((message.url.startsWith("/api/") && !message.url.startsWith("/api/config/env") && !message.url.startsWith("/api/activity/stream")) || message.url === "/health") result = await dispatchRouter(ipcRouter, message.method, message.url, message.body);
+    else result = { status: 404, data: { error: "Unknown IPC route" } };
+    process.send?.({ type: "rpc-result", id: message.id, ...result }, () => {});
+  } catch (error) { process.send?.({ type: "rpc-result", id: message.id, status: 400, data: { error: redactText((error as Error).message) } }, () => {}); }
 });
 
 const server = app.listen(PORT, HOST, () => {
@@ -305,8 +323,7 @@ const server = app.listen(PORT, HOST, () => {
   console.log("  Codex MCP Server");
   console.log("========================================");
   console.log(`  Local:     http://${HOST}:${PORT}`);
-  console.log(`  MCP:       http://${HOST}:${PORT}${MCP_PATHS[0]}`);
-  console.log(`  MCP alt:   http://${HOST}:${PORT}${MCP_PATHS[1]}`);
+  console.log(`  MCP:       http://${HOST}:${PORT}/mcp/[hidden]`);
   console.log(`  Health:    http://${HOST}:${PORT}/health`);
   console.log(`  Admin UI:  http://127.0.0.1:${ADMIN_PORT}/ui`);
   console.log(`  Default cwd: ${workspaceRoot}`);
@@ -332,13 +349,23 @@ server.on("error", (err: NodeJS.ErrnoException) => {
   process.exit(1);
 });
 
-process.on("SIGINT", () => {
+let shuttingDown = false;
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return; shuttingDown = true;
   console.log("\n[DUNG] Server dang tat...");
   sessionManager.stopCleanup();
-  void upstreamManager.shutdown();
-  adminServer.close();
-  server.close(() => process.exit(0));
+  await shutdownShellProcesses();
+  await upstreamManager.shutdown();
+  server.close(); server.closeAllConnections();
+  process.exit(0);
+}
+app.use((error: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) { next(error); return; }
+  res.status(error.type === "entity.too.large" ? 413 : 400).json({ error: "Invalid request" });
 });
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
+process.on("disconnect", () => { if (process.env.CONTROLLER_MANAGED === "1") void shutdown(); });
 
 // Tranh process tu tat khi stdin dong (Windows)
 if (process.stdin.isTTY) {

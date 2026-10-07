@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="vi">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Local MCP · Quản lý</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+  <div id="auth-screen" class="auth-screen">
+    <form id="auth-form" class="auth-card">
+      <span class="brand-icon">L</span><p class="eyebrow">LOCAL MCP / CONTROL CENTER</p>
+      <h1 id="auth-title">Chào mừng trở lại</h1><p id="auth-description">Đăng nhập để quản lý server và Cloudflare Tunnel.</p>
+      <label for="auth-password">Mật khẩu quản trị</label><input id="auth-password" type="password" autocomplete="current-password" required maxlength="256">
+      <label id="confirm-label" for="auth-confirm" hidden>Nhập lại mật khẩu</label><input id="auth-confirm" type="password" autocomplete="new-password" maxlength="256" hidden>
+      <p id="auth-error" class="error" role="alert"></p><button class="primary" type="submit" id="auth-submit">Đăng nhập</button>
+      <small>Panel chỉ mở trên máy này · 127.0.0.1</small>
+    </form>
+  </div>
+  <div id="shell" class="shell" hidden>
+    <aside>
+      <a class="brand" href="#overview"><span class="brand-icon">L</span><span>Local MCP<small>Control center</small></span></a>
+      <p class="nav-label">QUẢN LÝ</p>
+      <nav aria-label="Điều hướng chính">
+        <button data-page="overview"><span>◫</span> Tổng quan</button>
+        <button data-page="cloudflare"><span>◇</span> Cloudflare Tunnel</button>
+        <button data-page="gpt"><span>↗</span> Kết nối GPT</button>
+        <button data-page="config"><span>⚙</span> Cấu hình</button>
+        <button data-page="upstream"><span>⊞</span> MCP &amp; công cụ</button>
+        <button data-page="logs"><span>≡</span> Nhật ký</button>
+      </nav>
+      <div class="sidebar-bottom"><span class="dot"></span> Chỉ truy cập local<small>Cloudflare chỉ công khai MCP</small></div>
+    </aside>
+    <div class="main">
+      <header><span id="breadcrumb">Workspace / Tổng quan</span><div class="toolbar"><button id="theme" class="quiet" aria-label="Đổi giao diện sáng/tối">◐</button><span class="local-label">127.0.0.1</span><button id="logout" class="quiet">Đăng xuất</button></div></header>
+      <main id="content" tabindex="-1"></main>
+      <footer><span>Local MCP · Windows controller</span><span>Không cần mở cổng router</span></footer>
+    </div>
+  </div>
+  <div id="notice" class="notice" role="status" hidden></div>
+  <dialog id="reauth-dialog"><form id="reauth-form"><p class="eyebrow">XÁC NHẬN DANH TÍNH</p><h2>Xem thông tin bảo mật</h2><p>Nhập mật khẩu quản trị. Quyền xem có hiệu lực trong 5 phút.</p><label for="reauth-password">Mật khẩu</label><input id="reauth-password" type="password" autocomplete="current-password" required maxlength="256"><p id="reauth-error" class="error" role="alert"></p><div class="actions"><button type="button" id="reauth-cancel">Hủy</button><button class="primary" type="submit">Xác nhận</button></div></form></dialog>
+  <script type="module" src="app.js"></script>
+</body></html>

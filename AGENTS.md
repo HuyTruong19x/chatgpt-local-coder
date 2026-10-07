@@ -12,7 +12,7 @@ MCP server local giống Codex: đọc/ghi file, chạy lệnh, git. Dùng với
 - **Full machine access** — không giới hạn path, không chặn lệnh
 - Dùng absolute path bất kỳ: `C:\`, `D:\Projects\...` (Windows) · `/Users/you/projects/...` (macOS) · `/home/you/...` (Linux)
 - `WORKSPACE_PATH` chỉ là thư mục mặc định cho path tương đối và shell/git
-- `CHATGPT_AUTO_APPROVE=true` — giảm popup xác nhận trên ChatGPT
+- `CHATGPT_AUTO_APPROVE` là legacy preference; tool annotations luôn mô tả đúng rủi ro
 
 ## ChatGPT: tránh popup + lỗi "Luôn cho phép phải kết nối lại"
 
@@ -36,11 +36,11 @@ Thay vào đó:
 Bình thường khi:
 - Server restart (`stop.ps1` / `start.ps1`, hoặc Ctrl+C `npm start`) trong lúc ChatGPT đang kết nối
 - ChatGPT đóng stream SSE sau khi đổi quyền
-- Tunnel URL đổi (chạy lại `tunnel.ps1` cloudflared) mà chưa update Connector URL
+- Token/hostname đổi mà chưa update app Server URL trên ChatGPT
 
 **Fix:** Giữ server + tunnel chạy ổn định, không restart giữa chừng. Nếu restart → Refresh connector + chat mới.
 
-**Khuyến nghị:** Dùng OpenAI Secure MCP Tunnel — `tunnel_id` cố định, không cần đổi URL connector mỗi lần. Trên Windows: `openai-tunnel.ps1`. Trên macOS/Linux script này không chạy (PowerShell + bản Windows), phải tự tải binary từ [openai/tunnel-client](https://github.com/openai/tunnel-client/releases).
+**Luồng hiện tại:** chạy `launcher.cmd`, setup named Cloudflare Tunnel và domain trong panel. `openai-tunnel.ps1` đã deprecated. Admin có mật khẩu và chỉ mở localhost; MCP runtime giao tiếp với controller qua IPC.
 
 ## Tool profile — `slim` (mặc định) vs `full`
 
@@ -150,21 +150,15 @@ Dùng `dry_run: true` để xem diff trước khi ghi.
 **Windows**
 
 ```powershell
-.\start.ps1 -Force          # Terminal 1: MCP server
-.\openai-tunnel.ps1         # Terminal 2: OpenAI tunnel (URL cố định)
+.\launcher.cmd             # Controller/admin: tạo mật khẩu ở lần đầu
+# Panel: Cloudflare Tunnel → preview/apply domain → Chạy tất cả
 ```
 
-**Lần đầu:** chạy `.\openai-tunnel.ps1 -Init` → nhập `tunnel_id` + Runtime API key từ [Platform Tunnels](https://platform.openai.com/settings/organization/tunnels).
+**Lần đầu:** nhập Cloudflare API token trong panel, chọn zone active và hostname. Token Cloudflare nằm trong vault Windows DPAPI. Trang Kết nối GPT cung cấp Server URL chính xác và yêu cầu xác nhận mật khẩu trước khi copy.
 
-Tunnel cũ (URL đổi mỗi lần): `.\tunnel.ps1` (cloudflared).
+Các script `start.ps1` / `tunnel.ps1` / `stop.ps1` mở controller. Dừng MCP/tunnel bằng panel, không kill port owner tùy ý.
 
-**macOS / Linux** — các script `.ps1` không chạy trực tiếp:
-
-```bash
-npm start                                    # Terminal 1: MCP server
-npm run tunnel                               # Terminal 2: cloudflared
-ssh -p 443 -R0:localhost:3000 a.pinggy.io    # hoặc Pinggy, nếu mạng chặn cổng 7844
-```
+Setup panel/vault hiện hỗ trợ Windows x64. `npm run start:runtime` là đường chạy MCP riêng cho chẩn đoán và không mở admin HTTP listener.
 
 **ChatGPT:** [Settings → Connectors](https://chatgpt.com/#settings/Connectors) → URL phải là `https://<tunnel>/mcp/<MCP_TOKEN>`. Vào `/mcp` trơn sẽ trả 404. Coi URL này như mật khẩu.
 
@@ -176,7 +170,7 @@ Health check: `http://127.0.0.1:3000/health` | Admin UI: `http://127.0.0.1:<ADMI
 |---|---|
 | Access denied | Kiểm tra path; bật `FULL_DISK_ACCESS=true` |
 | Patch context not found | Đọc file trước; thêm context lines (dòng bắt đầu bằng space) |
-| ChatGPT hỏi quyền mỗi lần | Settings → Apps → đặt *Chỉ hỏi trước thay đổi quan trọng*; kiểm tra `CHATGPT_AUTO_APPROVE=true`. **Không** bấm "Luôn cho phép" trên popup (xem mục trên) |
+| ChatGPT hỏi quyền mỗi lần | Cấu hình quyền tại Settings → Apps; annotations không bỏ qua xác nhận của ChatGPT |
 | Connection failed | Server + tunnel đều phải chạy; URL phải HTTPS và có `/mcp/<MCP_TOKEN>` |
 | Tool not found | Tool đó chỉ có ở profile `full` — xem mục *Tool profile*. Gọi `agent_status` để kiểm tra |
 | Connector loading mãi khi bấm Create | Build cũ bị deadlock SSE stream. Chạy `npm run build` rồi khởi động lại server |

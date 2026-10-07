@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { Router, type Request, type Response } from "express";
+import { guardAsyncRoutes } from "../lib/async-routes.js";
 import type { McpUpstreamManager } from "../lib/mcp-upstream-manager.js";
 import {
   defaultUpstreamConfig,
@@ -70,7 +71,7 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
   instructionSummary?: () => Record<string, unknown>;
   instructionsPreview?: () => string;
 }): Router {
-  const router = Router();
+  const router = guardAsyncRoutes(Router());
   const envPath = path.resolve(process.cwd(), ".env");
 
   router.get("/health", async (_req: Request, res: Response) => {

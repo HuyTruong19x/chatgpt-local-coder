@@ -4,6 +4,8 @@
  */
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const BASE = `http://127.0.0.1:${PORT}`;
+const TOKEN = process.env.MCP_TOKEN;
+if (!TOKEN) throw new Error('Set MCP_TOKEN to match the running server.');
 
 let passed = 0;
 let failed = 0;
@@ -26,7 +28,7 @@ async function mcpPost(path, body, sessionId, extraHeaders = {}) {
   };
   if (sessionId) headers["mcp-session-id"] = sessionId;
 
-  const res = await fetch(`${BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+  const res = await fetch(`${BASE}${path}/${TOKEN}`, { method: "POST", headers, body: JSON.stringify(body) });
   const text = await res.text();
   let json;
   try {

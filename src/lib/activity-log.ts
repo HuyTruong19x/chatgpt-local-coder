@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "fs/promises";
 import { getAuditPath } from "./audit.js";
+import { redact } from "./redaction.js";
 
 export type ActivityKind = "tool" | "mcp" | "session" | "system";
 
@@ -49,11 +50,11 @@ export function summarizeToolArgs(tool: string, args: unknown): string {
 }
 
 export function appendActivity(partial: Omit<ActivityEntry, "id" | "time"> & { time?: string }): ActivityEntry {
-  const entry: ActivityEntry = {
+  const entry: ActivityEntry = redact({
     id: randomUUID(),
     time: partial.time ?? new Date().toISOString(),
     ...partial,
-  };
+  });
 
   entries.push(entry);
   while (entries.length > MAX_ENTRIES) entries.shift();

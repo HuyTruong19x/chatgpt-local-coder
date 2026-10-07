@@ -6,6 +6,7 @@ import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 import { spawn } from "node:child_process";
+import { managedRuntime } from './runtime-rpc.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -14,6 +15,7 @@ const scratch = process.env.GOAL_SCRATCH || path.join(root, ".tool-test-tmp", "b
 const mcpPort = 4100 + Math.floor(Math.random() * 200);
 const adminPort = mcpPort + 1;
 const mockPort = mcpPort + 2;
+const token = 'bridge_test_mcp_token_abcdefghijklmnopqrstuvwxyz';
 const tmpDir = path.join(scratch, `run-${mcpPort}`);
 
 function spawnNode(script, env = {}) {
@@ -50,7 +52,7 @@ async function mcpPost(base, body, sessionId, extraHeaders = {}) {
     ...extraHeaders,
   };
   if (sessionId) headers["mcp-session-id"] = sessionId;
-  const res = await fetch(`${base}/mcp`, { method: "POST", headers, body: JSON.stringify(body) });
+  const res = await fetch(`${base}/mcp/${token}`, { method: "POST", headers, body: JSON.stringify(body) });
   const text = await res.text();
   let json = null;
   try {
@@ -99,11 +101,13 @@ await fs.writeFile(
 );
 
 const mockHttp = spawnNode(path.join(root, "scripts/mock-http-mcp.mjs"), { MOCK_HTTP_MCP_PORT: String(mockPort) });
-const hub = spawnNode(path.join(root, "dist/index.js"), {
+const { child: hub, rpc, stop } = managedRuntime(root, {
   PORT: String(mcpPort),
   ADMIN_PORT: String(adminPort),
   MCP_UPSTREAM_CONFIG: configPath,
   WORKSPACE_PATH: root,
+  MCP_TOKEN: token,
+  CHATGPT_TOOL_PROFILE: 'full',
 });
 
 let hubLog = "";
@@ -126,7 +130,7 @@ try {
   log(`ports mcp=${mcpPort} admin=${adminPort} mock=${mockPort}`);
   await waitFor(`http://127.0.0.1:${mockPort}/health`);
   await waitFor(`http://127.0.0.1:${mcpPort}/health`);
-  await waitFor(`http://127.0.0.1:${adminPort}/health`);
+  if ((await rpc('GET', '/health')).status !== 200) throw new Error('Runtime IPC health failed');
 
   const init = await mcpPost(
     `http://127.0.0.1:${mcpPort}`,
@@ -182,11 +186,7 @@ try {
   }
   log(`tools/list before allowlist: mockhttp__add absent (${toolNamesBefore.length} tools)`);
 
-  const enableProxy = await (
-    await fetch(`http://127.0.0.1:${adminPort}/api/upstream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+  const enableProxy = (await rpc('POST', '/api/upstream', {
         server: {
           id: "mockhttp",
           name: "Mock HTTP",
@@ -197,9 +197,7 @@ try {
           tools: ["add"],
           tool_prefix: "mockhttp",
         },
-      }),
-    })
-  ).json();
+      })).data;
   if (!enableProxy.ok) throw new Error(JSON.stringify(enableProxy));
   log("admin API enabled allowlist proxy for mockhttp__add");
 
@@ -216,12 +214,13 @@ try {
   log(`tools/list after allowlist: mockhttp__add present`);
 
   const proxied = await callTool(`http://127.0.0.1:${mcpPort}`, sessionId, "mockhttp__add", { a: 1, b: 2 });
+  // Direct proxy returns the upstream CallToolResult verbatim; the meta tool uses toolResult.
   const proxiedPayload = JSON.parse(proxied.result.content[0].text);
-  if (!proxiedPayload.ok) throw new Error(JSON.stringify(proxiedPayload));
+  if (proxiedPayload !== 3) throw new Error(`expected upstream add result 3, got ${JSON.stringify(proxiedPayload)}`);
 
-  const adminHtml = await (await fetch(`http://127.0.0.1:${adminPort}/ui/`)).text();
-  if (!adminHtml.includes("Import") || !adminHtml.includes("Claude Code") || !adminHtml.includes("OpenCode")) {
-    throw new Error("admin ui missing expected import controls");
+  const adminHtml = await fs.readFile(path.join(root, 'public/controller/index.html'), 'utf8');
+  if (!adminHtml.includes('data-page="upstream"')) {
+    throw new Error("admin ui missing upstream view");
   }
 
   const fixture = path.join(tmpDir, "cursor-mcp-fixture.json");
@@ -230,13 +229,7 @@ try {
     JSON.stringify({ mcpServers: { imported: { command: "node", args: ["x.js"] } } }),
     "utf-8"
   );
-  const imported = await (
-    await fetch(`http://127.0.0.1:${adminPort}/api/import/cursor`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: fixture, merge: true }),
-    })
-  ).json();
+  const imported = (await rpc('POST', '/api/import/cursor', { path: fixture, merge: true })).data;
   if (!imported.ok || !imported.imported.includes("imported")) throw new Error(JSON.stringify(imported));
 
   log("OK  bridge integration complete");
@@ -259,8 +252,8 @@ try {
   await fs.writeFile(path.join(scratch, "integration-error.log"), String(err?.stack || err));
   console.error("FAIL bridge integration:", err.message || err);
   console.error(hubLog.slice(-2000));
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
-  hub.kill("SIGTERM");
+  await stop();
   mockHttp.kill("SIGTERM");
 }

@@ -12,19 +12,23 @@
   },
   "author": "hoangcoderr",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/controller/index.js",
   "bin": {
-    "codex-mcp-server": "dist/index.js"
+    "codex-mcp-server": "dist/controller/index.js"
   },
   "scripts": {
     "build": "tsc",
-    "test": "tsc && node scripts/test-patch.mjs && node scripts/test-tools.mjs && node scripts/test-checkpoints.mjs && node scripts/test-mcp-upstream.mjs && node scripts/test-mcp-oauth.mjs && node scripts/test-activity-log.mjs && node scripts/test-project-memory.mjs && node scripts/test-tool-profile.mjs && node scripts/test-shell-persist.mjs",
+    "test": "tsc && node scripts/test-patch.mjs && node scripts/test-tools.mjs && node scripts/test-checkpoints.mjs && node scripts/test-mcp-upstream.mjs && node scripts/test-mcp-oauth.mjs && node scripts/test-activity-log.mjs && node scripts/test-project-memory.mjs && node scripts/test-tool-profile.mjs && node scripts/test-shell-persist.mjs && node scripts/test-controller.mjs",
     "test:all": "node scripts/run-all-tests.mjs",
     "test:integration": "tsc && node scripts/test-mcp-bridge-integration.mjs",
     "init-claude-md": "node scripts/init-claude-md.mjs",
-    "start": "node dist/index.js",
-    "dev": "tsx watch src/index.ts",
-    "tunnel": "cloudflared tunnel --url http://localhost:3000"
+    "start": "node dist/controller/index.js",
+    "start:runtime": "node dist/index.js",
+    "dev": "tsx watch src/controller/index.ts",
+    "tunnel": "node dist/controller/index.js",
+    "reset:admin": "node dist/controller/index.js --reset-password",
+    "test:controller": "tsc && node scripts/test-controller.mjs",
+    "test:ui": "tsc && node scripts/test-admin-ui.mjs"
   },
   "keywords": [
     "mcp",

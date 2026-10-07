@@ -8,6 +8,9 @@ param(
     [switch]$Force
 )
 
+Write-Warning 'Deprecated: use named Cloudflare Tunnel with a custom domain. Run launcher.cmd and open Cloudflare Tunnel in the panel. Existing OpenAI credentials have not been deleted.'
+return
+
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir

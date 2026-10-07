@@ -4,12 +4,14 @@
 import { spawn } from "node:child_process";
 import path from "path";
 import { fileURLToPath } from "url";
+import { managedRuntime } from './runtime-rpc.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 
 const mcpPort = 4200 + Math.floor(Math.random() * 200);
 const adminPort = mcpPort + 1;
+const token = 'full_suite_mcp_token_abcdefghijklmnopqrstuvwxyz';
 
 function runNode(script, env = {}) {
   const scriptPath = path.join(root, script);
@@ -38,11 +40,11 @@ function runBuild() {
   });
 }
 
-async function waitFor(url, ms = 25000) {
+async function waitFor(url, ms = 25000, headers = {}) {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { headers });
       if (res.ok) return await res.json();
     } catch {}
     await new Promise((r) => setTimeout(r, 250));
@@ -61,6 +63,9 @@ const unitScripts = [
   "scripts/test-project-memory.mjs",
   "scripts/test-tool-profile.mjs",
   "scripts/test-shell-persist.mjs",
+  "scripts/test-mcp-upstream.mjs",
+  "scripts/test-mcp-oauth.mjs",
+  "scripts/test-controller.mjs",
 ];
 
 console.log("\n=== Unit tests ===");
@@ -70,15 +75,11 @@ for (const script of unitScripts) {
 }
 
 console.log("\n=== Integration (spawn server) ===");
-const server = spawn(process.execPath, ["dist/index.js"], {
-  cwd: root,
-  env: {
-    ...process.env,
+const { child: server, rpc, stop } = managedRuntime(root, {
     PORT: String(mcpPort),
     ADMIN_PORT: String(adminPort),
     CHATGPT_TOOL_PROFILE: "slim",
-  },
-  stdio: ["ignore", "pipe", "pipe"],
+    MCP_TOKEN: token,
 });
 
 let serverLog = "";
@@ -87,19 +88,19 @@ server.stderr?.on("data", (d) => (serverLog += d));
 
 try {
   const health = await waitFor(`http://127.0.0.1:${mcpPort}/health`);
-  if (!health.instructions?.tool_profile) throw new Error("health missing instructions");
-  console.log(`OK  health: profile=${health.instructions.tool_profile}, memory=${health.instructions.memory_files?.length ?? 0} files`);
+  if (Object.keys(health).sort().join(',') !== 'name,status') throw new Error("public health exposes configuration");
+  console.log("OK  public health returns minimal status");
 
-  const admin = await waitFor(`http://127.0.0.1:${adminPort}/health`);
+  const admin = (await rpc('GET', '/health')).data;
   if (!admin.instructions) throw new Error("admin health missing instructions");
   console.log("OK  admin health");
 
-  const preview = await (await fetch(`http://127.0.0.1:${adminPort}/api/instructions/preview`)).json();
+  const preview = (await rpc('GET', '/api/instructions/preview')).data;
   if (!preview.preview?.includes("Agent workflow")) throw new Error("instructions preview missing agent prompt");
   console.log(`OK  instructions preview ${preview.total_chars} chars`);
 
   // MCP session + tools/list count
-  const initRes = await fetch(`http://127.0.0.1:${mcpPort}/mcp`, {
+  const initRes = await fetch(`http://127.0.0.1:${mcpPort}/mcp/${token}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
     body: JSON.stringify({
@@ -112,7 +113,7 @@ try {
   const sid = initRes.headers.get("mcp-session-id");
   if (!sid) throw new Error("no session id");
 
-  const listRes = await fetch(`http://127.0.0.1:${mcpPort}/mcp`, {
+  const listRes = await fetch(`http://127.0.0.1:${mcpPort}/mcp/${token}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -131,10 +132,10 @@ try {
   if (!tools.some((t) => t.name === "apply_patch")) throw new Error("apply_patch missing");
 
   process.env.PORT = String(mcpPort);
-  await runNode("scripts/test-mcp-session.mjs", { PORT: String(mcpPort) });
+  await runNode("scripts/test-mcp-session.mjs", { PORT: String(mcpPort), MCP_TOKEN: token });
   console.log("OK  test-mcp-session");
 } finally {
-  server.kill();
+  await stop();
 }
 
 console.log("\n=== ALL TESTS PASSED ===");
