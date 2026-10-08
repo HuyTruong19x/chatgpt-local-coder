@@ -15,6 +15,7 @@ const { AdminAuth } = await import('../dist/controller/auth.js');
 const { ConfigStore } = await import('../dist/controller/store.js');
 const { Vault } = await import('../dist/controller/vault.js');
 const { Runtime } = await import('../dist/controller/runtime.js');
+const { WorkspaceManager } = await import('../dist/controller/workspaces.js');
 const { Cloudflare } = await import('../dist/controller/cloudflare.js');
 const { createController } = await import('../dist/controller/server.js');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -42,8 +43,9 @@ const cloudflare = new Cloudflare(config, vault, async (url, init = {}) => {
   else throw new Error(`Unexpected mocked API ${route}`);
   return Response.json({ success: true, result });
 });
-const runtime = new Runtime(config, vault, path.join(root, 'dist/index.js'));
-const controller = await createController({ config, auth, vault, runtime, cloudflare, port });
+const workspaces = new WorkspaceManager(config, vault, path.join(root, 'dist/index.js')); await workspaces.init(); await workspaces.listen();
+const runtime = workspaces.runtime('default');
+const controller = await createController({ config, auth, vault, runtime, cloudflare, workspaces, port });
 const server = controller.app.listen(port, '127.0.0.1'); await once(server, 'listening');
 let binary;
 for (const candidate of [process.env.CHROME_BINARY, 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe']) if (candidate && await fs.access(candidate).then(() => true).catch(() => false)) { binary = candidate; break; }
@@ -92,6 +94,19 @@ try {
   await evaluate('document.querySelector("#cf-selection").requestSubmit()'); await until('document.activeElement.id === "cf-preview"'); assert.equal(mutations, 1); ok('saved token/form/error restore on reopening; preview resumes the failed plan without mutations');
   denyCreate = false;
   await click('#cf-apply'); await until('document.querySelector("#cf-current").textContent.includes("Đã cấu hình")'); assert.equal(mutations, 4); assert.equal(await evaluate('!!document.querySelector("#cf-last-error")'), false); ok('Retry provisions mocked tunnel, ingress and DNS and clears the saved error');
+  await page('workspaces', '#workspace-create');
+  assert.equal(await evaluate('document.querySelectorAll("[data-ws-edit]").length'), 2); ok('Workspaces view shows default and Blender runtimes');
+  const blenderWorkspace = workspaces.list().find(w=>w.preset === 'blender');
+  await click(`[data-ws-test="${blenderWorkspace.id}"]`); await until(`!!document.querySelector('[data-ws-result="${blenderWorkspace.id}"] .callout')`);
+  assert((await evaluate(`document.querySelector('[data-ws-result="${blenderWorkspace.id}"]').textContent`)).includes('Khởi chạy MCP')); ok('Blender test errors remain visible on the workspace card');
+  await fill('#workspace-create [name="name"]', 'Browser workspace'); await fill('#workspace-create [name="path"]', scratch); await evaluate('document.querySelector("#workspace-create").requestSubmit()');
+  await until('document.querySelectorAll("[data-ws-edit]").length === 3');
+  const created = workspaces.list().find(w=>w.name === 'Browser workspace'); assert(created);
+  await click(`[data-workspace="${created.id}"][data-ws-action="start"]`); await until(`document.querySelector('[data-workspace-state="${created.id}"]').textContent.includes('running')`);
+  await click(`[data-workspace="${created.id}"][data-ws-action="stop"]`); await until(`document.querySelector('[data-workspace-state="${created.id}"]').textContent.includes('stopped')`); ok('UI creates an independent workspace and controls its runtime');
+  await click(`[data-ws-url="${created.id}"]`); await until('document.querySelector("#reauth-dialog").open'); await fill('#reauth-password', 'browser-password-123456'); await evaluate('document.querySelector("#reauth-form").requestSubmit()');
+  await until(`!!document.querySelector('[data-ws-result="${created.id}"] input')`);
+  assert.equal(await evaluate(`document.querySelector('[data-ws-result="${created.id}"] input').value`), `https://mcp.example.com/mcp/${workspaces.token(created.id)}`); ok('workspace URL is revealed only after password confirmation on the same hostname');
   await page('gpt', '#gpt-url'); assert((await evaluate('document.querySelector("#gpt-url").value')).includes('[hidden]')); await click('#reveal-gpt'); await until('document.querySelector("#reauth-dialog").open'); await fill('#reauth-password', 'browser-password-123456'); await evaluate('document.querySelector("#reauth-form").requestSubmit()'); await until('document.querySelector("#gpt-url").value.includes("ui_mcp_token_")'); ok('GPT URL is masked; password reauthentication reveals exact URL');
   await page('config', '#env-form'); assert.equal(await evaluate('document.querySelector("[data-env=MCP_TOKEN]").value'), '[hidden]'); await fill('#new-key', 'SHELL_TIMEOUT'); await fill('#new-value', '140'); await evaluate('document.querySelector("#env-form").requestSubmit()'); await until('document.querySelector("[data-env=SHELL_TIMEOUT]")?.value === "140"'); assert.equal((await config.values()).SHELL_TIMEOUT, '140'); ok('config edits persist; navigating away masks secrets');
   await page('upstream', '#edit-upstream'); for (const tab of ['import','plugins','hooks','tools']) { await click(`[data-up-tab="${tab}"]`); await until(`!!document.querySelector(${JSON.stringify({ import: '#import-form', plugins: '#save-plugins', hooks: '#save-hooks', tools: '#save-tools' }[tab])})`); } ok('upstream/import/plugins/hooks/tools views load without browser errors');
@@ -102,6 +117,6 @@ try {
 } finally {
   socket?.close(); for (const call of pending.values()) clearTimeout(call.timer);
   if (browser.pid) { if (process.platform === 'win32') { const killer = spawn('taskkill.exe', ['/PID', String(browser.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); await once(killer, 'exit').catch(() => {}); } else browser.kill(); }
-  controller.closeEvents(); await runtime.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+  controller.closeEvents(); await workspaces.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
 }
 console.log(`\n${count} browser checks passed. Screenshot: ${path.join(scratch, 'overview.png')}`);

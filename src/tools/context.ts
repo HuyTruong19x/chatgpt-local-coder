@@ -153,6 +153,7 @@ export function registerContextTools(server: McpServer, workspaceRoot: string): 
         permission_description: describePermissionProfile(),
         full_machine_access: getFullDiskAccess(),
         default_cwd: getDefaultCwd(),
+        workspace_id: process.env.MCP_WORKSPACE_ID || "default",
         machine_roots: getMachineRoots(),
         audit_log: getAuditPath(),
         pid: process.pid,

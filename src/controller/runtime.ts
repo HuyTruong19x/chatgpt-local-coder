@@ -29,7 +29,7 @@ export class Runtime extends EventEmitter {
   private monitor?: NodeJS.Timeout;
   private metricsPort = 20241;
   activeConfig: Record<string, string> | null = null;
-  constructor(readonly config: ConfigStore, readonly vault: Vault, private entry = path.join(config.root, "dist", "index.js"), private retryDelays = [2000, 5000, 15000], private launch = { fork, spawn }) {
+  constructor(readonly config: ConfigStore, readonly vault: Vault, private entry = path.join(config.root, "dist", "index.js"), private retryDelays = [2000, 5000, 15000], private launch = { fork, spawn }, private tunnelDependency?: () => boolean) {
     super();
     this.monitor = setInterval(() => void this.updateReadiness(), 5000);
     this.monitor.unref();
@@ -63,7 +63,7 @@ export class Runtime extends EventEmitter {
         if (target === "tunnel") await this.stop("tunnel", true);
       }
       if (action !== "stop") {
-        if (target === "all" || target === "mcp" || target === "tunnel") await this.start("mcp");
+        if (target === "all" || target === "mcp" || target === "tunnel" && !this.tunnelDependency) await this.start("mcp");
         if (target === "all" || target === "tunnel" || (target === "mcp" && this.services.tunnel.desired)) await this.start("tunnel");
       }
     };
@@ -81,7 +81,7 @@ export class Runtime extends EventEmitter {
       let child: ChildProcess;
       if (target === "mcp") {
         await availablePort(+(values.PORT || 3000));
-        const env = { ...process.env, ...values, HOST: "127.0.0.1", CONTROLLER_MANAGED: "1", MCP_OAUTH_CALLBACK_BASE: `http://127.0.0.1:${values.ADMIN_PORT || 3001}` };
+        const env = { ...process.env, ...values, HOST: "127.0.0.1", CONTROLLER_MANAGED: "1", MCP_OAUTH_CALLBACK_BASE: values.MCP_OAUTH_CALLBACK_BASE || `http://127.0.0.1:${values.ADMIN_PORT || 3001}` };
         for (const key of Object.keys(env)) if (/^(OPENAI_TUNNEL_|CLOUDFLARE_|ADMIN_TOKEN)/.test(key)) delete (env as NodeJS.ProcessEnv)[key];
         child = this.launch.fork(this.entry, [], { cwd: this.config.root, env, silent: true, windowsHide: true } as Parameters<typeof fork>[2]);
         this.activeConfig = { ...values, HOST: "127.0.0.1" };
@@ -92,7 +92,7 @@ export class Runtime extends EventEmitter {
           } else if (message?.type === "activity") this.emit("activity", redact(message.data));
         });
       } else {
-        if (!this.services.mcp.child || this.services.mcp.state.state !== "running") throw new Error("MCP chưa sẵn sàng");
+        if (this.tunnelDependency ? !this.tunnelDependency() : !this.services.mcp.child || this.services.mcp.state.state !== "running") throw new Error("MCP gateway chưa sẵn sàng");
         const token = this.vault.get("tunnelToken");
         if (!token) throw new Error("Hoàn tất setup Cloudflare trước");
         this.metricsPort = +(values.CLOUDFLARED_METRICS_PORT || 20241);

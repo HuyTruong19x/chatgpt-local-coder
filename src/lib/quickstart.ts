@@ -48,6 +48,7 @@ export function buildServerInstructions(
   const header = [
     "# Codex Local Coder MCP",
     `Default project: ${workspaceRoot}`,
+    `Workspace ID: ${process.env.MCP_WORKSPACE_ID || "default"}`,
     "Full machine access: ON. Tag this connector in ChatGPT before every task.",
   ].join("\n");
 

@@ -1,6 +1,6 @@
 import { api as request, operation } from './api.js';
 import { $, escape as e, bind, badge, head, empty, notice } from './ui.js';
-export const titles = { overview: 'Tổng quan', cloudflare: 'Cloudflare Tunnel', gpt: 'Kết nối GPT', config: 'Cấu hình', upstream: 'MCP & công cụ', logs: 'Nhật ký' };
+export const titles = { overview: 'Tổng quan', workspaces: 'Workspaces', cloudflare: 'Cloudflare Tunnel', gpt: 'Kết nối GPT', config: 'Cấu hình', upstream: 'MCP & công cụ', logs: 'Nhật ký' };
 let page = 'overview', reauth, state, envOriginal, revealedAt = 0;
 let viewEpoch = 0;
 async function api(url, method = 'GET', body) {
@@ -19,16 +19,59 @@ export async function render(name, verify) {
   document.querySelectorAll('[data-page]').forEach(node => { node.classList.toggle('active', node.dataset.page === page); node.setAttribute('aria-current', node.dataset.page === page ? 'page' : 'false'); });
   $('#breadcrumb').textContent = `Workspace / ${titles[page]}`;
   content().innerHTML = empty('Đang tải…');
-  try { await ({ overview, cloudflare, gpt, config, upstream, logs })[page](); }
+  try { await ({ overview, workspaces, cloudflare, gpt, config, upstream, logs })[page](); }
   catch (error) { if (epoch !== viewEpoch || error.code === 'STALE_VIEW') return; content().innerHTML = head(titles[page], 'Không tải được dữ liệu') + `<div class="callout">${e(error.message)}</div><button id="retry-page">Thử lại</button>`; bind('#retry-page', () => render(page)); }
 }
 export function refreshStatus(value) {
   state = value;
+  if (page === 'workspaces') {
+    for (const workspace of value.workspaces || []) {
+      const node = $(`[data-workspace-state="${workspace.id}"]`); if (node) node.innerHTML = badge(workspace.state);
+      const detail = $(`[data-workspace-detail="${workspace.id}"]`); if (detail) detail.textContent = workspace.error || (workspace.pid ? `PID ${workspace.pid}` : 'Chưa khởi chạy');
+    }
+  }
   if (page !== 'overview') return;
   for (const name of ['mcp', 'tunnel']) {
     const node = $(`#state-${name}`); if (node) node.innerHTML = badge(value[name].state);
     const detail = $(`#detail-${name}`); if (detail) detail.textContent = value[name].error || (value[name].pid ? `PID ${value[name].pid} · Khôi phục ${value[name].retries}/3` : 'Chưa khởi chạy');
   }
+}
+async function workspaces() {
+  const epoch = viewEpoch, data = await api('/api/workspaces');
+  content().innerHTML = head('Nhiều dự án, cùng một domain', 'Mỗi token kết nối tới đúng workspace. Khởi chạy và dừng từng dự án độc lập.', '<button id="refresh-workspaces">↻ Làm mới</button>') +
+    `<div class="callout">${data.hostname ? `Domain chung: ${e(data.hostname)}.` : 'Hoàn tất Cloudflare Tunnel để lấy URL HTTPS.'} Mỗi workspace có token riêng. Trang Cấu hình và MCP & công cụ hiện quản lý workspace mặc định; chỉnh upstream của các workspace khác ngay bên dưới.</div>` +
+    `<div class="grid two">${data.workspaces.map(w => `<article class="card"><div class="card-head"><h2>${e(w.name)}</h2><span data-workspace-state="${e(w.id)}">${badge(w.state)}</span></div><p><code>${e(w.path)}</code></p><p class="muted">${w.preset === 'blender' ? 'Blender MCP' : 'Coding MCP'} · Cổng nội bộ ${w.port}</p><p data-workspace-detail="${e(w.id)}">${e(w.error || (w.pid ? `PID ${w.pid}` : 'Chưa khởi chạy'))}</p><div class="actions">${['start','stop','restart'].map((action, i) => `<button data-workspace="${e(w.id)}" data-ws-action="${action}">${['Chạy','Dừng','Khởi động lại'][i]}</button>`).join('')}</div><div class="actions"><button data-ws-url="${e(w.id)}">Xem / copy URL</button><button data-ws-config="${e(w.id)}">Cấu hình MCP</button>${w.preset === 'blender' ? `<button data-ws-test="${e(w.id)}">Kiểm tra Blender MCP</button>` : ''}</div><div data-ws-result="${e(w.id)}" hidden></div><form data-ws-edit="${e(w.id)}"><label>Tên workspace<input name="name" value="${e(w.name)}" required maxlength="80"></label><label>Thư mục dự án<input name="path" value="${e(w.path)}" required></label><label class="check"><input name="autoStart" type="checkbox" ${w.autoStart ? 'checked' : ''}> Tự chạy khi mở ứng dụng</label><button type="submit">Lưu (dừng workspace trước)</button></form></article>`).join('')}</div>` +
+    `<div class="card"><h2>Thêm workspace</h2><form id="workspace-create"><div class="field-row"><label>Tên<input name="name" required maxlength="80" placeholder="Dự án mới"></label><label>Thư mục dự án có sẵn<input name="path" required placeholder="D:\\Projects\\MyProject"></label></div><label>Loại MCP<select name="preset"><option value="coding">Coding</option><option value="blender">Blender</option></select></label><button class="primary" type="submit">Tạo workspace & token</button></form></div>` +
+    `<div class="card"><h2>Kết nối add-on Blender đã có</h2><ol><li>Mở Blender, bật add-on MCP và khởi chạy socket server.</li><li>Bridge mặc định: <code>uvx mcp-for-blender</code>, kết nối <code>127.0.0.1:9876</code>. Nếu add-on của bạn dùng cổng khác, sửa <code>BLENDER_PORT</code> trong Cấu hình MCP.</li><li>Chọn đúng thư mục dự án Blender, bấm Chạy rồi Kiểm tra Blender MCP.</li><li>Copy URL của workspace Blender để kết nối qua cùng domain.</li></ol><p class="muted">Preset tắt telemetry của bridge bằng DISABLE_TELEMETRY=true. Add-on Blender giữ ở local.</p><a href="https://github.com/ahujasid/mcp-for-blender" target="_blank" rel="noreferrer">Hướng dẫn bridge/add-on ↗</a></div>`;
+  bind('#refresh-workspaces', () => render('workspaces'));
+  bind('[data-ws-action]', async (_, node) => { await operation(`/api/workspaces/${node.dataset.workspace}/lifecycle`, { action: node.dataset.wsAction }); if (epoch === viewEpoch) await render('workspaces'); });
+  bind('#workspace-create', async (_, form) => { const input = new FormData(form); await api('/api/workspaces', 'POST', Object.fromEntries(input)); if (epoch === viewEpoch) await render('workspaces'); }, 'submit');
+  bind('[data-ws-edit]', async (_, form) => { const input = new FormData(form); await api(`/api/workspaces/${form.dataset.wsEdit}`, 'PUT', { name: input.get('name'), path: input.get('path'), autoStart: input.has('autoStart') }); if (epoch === viewEpoch) await render('workspaces'); notice('Đã lưu workspace'); }, 'submit');
+  bind('[data-ws-url]', async (_, node) => {
+    await reauth(); revealedAt = Date.now(); const id = node.dataset.wsUrl, result = await api(`/api/workspaces/${id}/connection?reveal=1`);
+    if (epoch !== viewEpoch) return;
+    const box = $(`[data-ws-result="${id}"]`); box.hidden = false;
+    box.innerHTML = `<label>Server URL ${result.serverUrl ? 'HTTPS' : 'local (chưa setup Cloudflare)'}</label><div class="url-field"><input readonly value="${e(result.serverUrl || result.localUrl)}"><button data-copy-ws="${id}">Copy URL</button></div><p>Authentication: No authentication</p>`;
+    bind(`[data-copy-ws="${id}"]`, async () => { await reauth(); const fresh = await api(`/api/workspaces/${id}/connection?reveal=1`); await navigator.clipboard.writeText(fresh.serverUrl || fresh.localUrl); notice('Đã copy URL workspace'); });
+  });
+  bind('[data-ws-config]', async (_, node) => {
+    await reauth(); revealedAt = Date.now(); const id = node.dataset.wsConfig, result = await api(`/api/workspaces/${id}/upstream?reveal=1`);
+    if (epoch !== viewEpoch) return;
+    const box = $(`[data-ws-result="${id}"]`); box.hidden = false;
+    box.innerHTML = `<label>MCP upstream của workspace</label><textarea class="editor" data-ws-json="${id}">${e(JSON.stringify(result.config, null, 2))}</textarea><button data-ws-save="${id}">Lưu cấu hình MCP</button>`;
+    bind(`[data-ws-save="${id}"]`, async () => { await reauth(); await api(`/api/workspaces/${id}/upstream`, 'PUT', { config: JSON.parse($(`[data-ws-json="${id}"]`).value) }); notice('Đã lưu. Mở phiên MCP mới để cập nhật công cụ.'); });
+  });
+  bind('[data-ws-test]', async (_, node) => {
+    const id = node.dataset.wsTest;
+    try {
+      const result = await operation(`/api/workspaces/${id}/upstream/blender/test`, {});
+      if (epoch !== viewEpoch) return;
+      const box = $(`[data-ws-result="${id}"]`); box.hidden = false; box.innerHTML = `<pre>${e(JSON.stringify(result, null, 2))}</pre>`;
+    } catch (error) {
+      if (epoch === viewEpoch) { const box = $(`[data-ws-result="${id}"]`); box.hidden = false; box.innerHTML = `<div class="callout warning">${e(error.message)}</div>`; }
+      throw error;
+    }
+  });
 }
 async function overview() {
   state = await api('/api/status');
@@ -134,7 +177,7 @@ async function gpt(reveal = false) {
 async function config(reveal = false) {
   const data = await api(`/api/config/env${reveal ? '?reveal=1' : ''}`); envOriginal = data.values;
   content().innerHTML = head('Cấu hình ứng dụng', 'Đối chiếu cấu hình đã lưu và đang chạy. Thay đổi có hiệu lực sau khi restart.', '<button id="reveal-config">Xem thông tin bảo mật</button>') +
-    `<div class="card"><form id="env-form"><div class="table-wrap"><table><thead><tr><th>CONFIG</th><th>ĐÃ LƯU</th><th>ĐANG CHẠY</th></tr></thead><tbody>${Object.keys(data.values).sort().map(key => `<tr><td class="config-key"><code>${e(key)}</code></td><td><input aria-label="${e(key)}" data-env="${e(key)}" value="${e(data.values[key])}" ${data.values[key] === '[hidden]' ? 'readonly' : ''}></td><td><code>${e(data.active?.[key] ?? '—')}</code></td></tr>`).join('')}</tbody></table></div><div class="field-row"><div><label for="new-key">Thêm config (tên)</label><input id="new-key" placeholder="EXAMPLE_SETTING" pattern="[A-Z][A-Z0-9_]*"></div><div><label for="new-value">Giá trị</label><input id="new-value" autocomplete="off"></div></div><div class="actions"><button class="primary" type="submit">Lưu thay đổi</button><button type="button" id="config-restart">Restart MCP & tunnel</button></div></form><div class="callout">Admin luôn bind 127.0.0.1. Đổi ADMIN_PORT cần thoát ứng dụng và mở lại launcher. Đổi PORT cần áp dụng lại ingress trong Cloudflare wizard. WORKSPACE_PATH là thư mục mặc định của công cụ; quyền file vẫn là full machine access.</div></div>` +
+    `<div class="card"><form id="env-form"><div class="table-wrap"><table><thead><tr><th>CONFIG</th><th>ĐÃ LƯU</th><th>ĐANG CHẠY</th></tr></thead><tbody>${Object.keys(data.values).sort().map(key => `<tr><td class="config-key"><code>${e(key)}</code></td><td><input aria-label="${e(key)}" data-env="${e(key)}" value="${e(data.values[key])}" ${data.values[key] === '[hidden]' ? 'readonly' : ''}></td><td><code>${e(data.active?.[key] ?? '—')}</code></td></tr>`).join('')}</tbody></table></div><div class="field-row"><div><label for="new-key">Thêm config (tên)</label><input id="new-key" placeholder="EXAMPLE_SETTING" pattern="[A-Z][A-Z0-9_]*"></div><div><label for="new-value">Giá trị</label><input id="new-value" autocomplete="off"></div></div><div class="actions"><button class="primary" type="submit">Lưu thay đổi</button><button type="button" id="config-restart">Restart MCP & tunnel</button></div></form><div class="callout">Admin luôn bind 127.0.0.1. Đổi ADMIN_PORT cần thoát ứng dụng và mở lại launcher. PORT là cổng gateway chung; cổng runtime nằm ở Workspaces. Đổi PORT cần thoát ứng dụng, mở lại launcher và áp dụng lại ingress. WORKSPACE_PATH là thư mục mặc định của công cụ; quyền file vẫn là full machine access.</div></div>` +
     `<div class="card"><h2>Vault Cloudflare</h2><p class="muted">Mã hóa DPAPI CurrentUser · Không lưu API token hoặc tunnel token trong .env.</p><pre>${e(JSON.stringify(data.vault, null, 2))}</pre></div><div class="card"><h2>Đổi mật khẩu admin</h2><form id="password-form"><div class="field-row"><div><label for="current-password">Mật khẩu hiện tại</label><input id="current-password" type="password" required autocomplete="current-password"></div><div><label for="new-password">Mật khẩu mới (12–256 ký tự)</label><input id="new-password" type="password" minlength="12" maxlength="256" required autocomplete="new-password"></div></div><div class="actions"><button type="submit">Đổi mật khẩu & đăng xuất các phiên</button></div></form></div>`;
   bind('#reveal-config', async () => { await reauth(); revealedAt = Date.now(); await config(true); });
   bind('#env-form', async () => {

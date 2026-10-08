@@ -15,7 +15,7 @@ interface LocalToolOverrides {
   disabled?: string[];
 }
 
-const overridesPath = () => path.resolve(process.cwd(), "profiles", "tool-overrides.json");
+const overridesPath = () => process.env.MCP_TOOL_OVERRIDES || path.resolve(process.cwd(), "profiles", "tool-overrides.json");
 
 export function getLocalToolOverrides(): LocalToolOverrides {
   try {

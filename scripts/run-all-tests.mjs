@@ -66,6 +66,7 @@ const unitScripts = [
   "scripts/test-mcp-upstream.mjs",
   "scripts/test-mcp-oauth.mjs",
   "scripts/test-controller.mjs",
+  "scripts/test-workspaces.mjs",
 ];
 
 console.log("\n=== Unit tests ===");

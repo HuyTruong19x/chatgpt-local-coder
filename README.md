@@ -38,6 +38,25 @@ Nếu tạo tunnel báo HTTP 403, kiểm tra token có **Account → Cloudflare 
 
 [Cloudflare Tunnel API](https://developers.cloudflare.com/tunnel/get-started/) · [Tunnel run parameters](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/run-parameters/)
 
+## Nhiều workspace trên cùng hostname
+
+Controller chạy gateway tại `PORT` (mặc định 3000), còn mỗi workspace có MCP runtime và cổng nội bộ riêng. Cloudflare ingress hiện tại vẫn trỏ vào gateway; không cần tạo thêm hostname/DNS. URL khác nhau ở token:
+
+```text
+Workspace hiện tại: https://mcp.example.com/mcp/<token-default>
+Blender:            https://mcp.example.com/mcp/<token-blender>
+```
+
+Gateway chuyển tiếp POST/GET/DELETE và SSE tới đúng runtime, không trả HTTP redirect. Token lạ trả 404; workspace đã dừng trả 503. Session đã được gateway ghi nhận thuộc workspace nào sẽ không dùng được trên workspace khác. Mỗi runtime có shell, checkpoint, audit, upstream config, OAuth, plugins và tool overrides riêng. Full machine access vẫn giữ nguyên; đây là tách trạng thái làm việc theo tiến trình.
+
+Mở **Workspaces** để thêm/sửa thư mục dự án, Start/Stop/Restart từng runtime, xem cấu hình MCP upstream hoặc copy URL sau xác nhận mật khẩu. Token của workspace mới được lưu trong vault DPAPI; token/URL cũ của workspace mặc định được giữ lại. Registry nằm tại `.mcp-state/controller/workspaces.json`; cấu hình từng workspace nằm trong `.mcp-state/controller/workspaces/<id>/`. Mỗi workspace có tùy chọn tự chạy riêng. “Chạy tất cả” khởi chạy mọi workspace và tunnel chung; dừng một workspace không dừng tunnel.
+
+Preset **Blender** được tạo một lần khi chuyển sang phiên bản này. Chọn thư mục dự án Blender thực tế trong panel (thư mục ban đầu là `.mcp-state/controller/blender-project`). Preset dùng bridge `uvx mcp-for-blender`, nối tới add-on local `127.0.0.1:9876`, và đặt `DISABLE_TELEMETRY=true` cho bridge. Có thể đổi command/args/BLENDER_HOST/BLENDER_PORT trong cấu hình MCP nếu đang dùng bridge khác. Add-on socket không phải endpoint MCP HTTP và không cần đưa cổng 9876 ra tunnel.
+
+Với add-on đã cài: mở Blender, bật server của add-on, bấm **Chạy** workspace Blender rồi **Kiểm tra Blender MCP**. Nếu thiếu bridge, cài uv và chạy `uvx mcp-for-blender` hoặc để uvx tải bridge khi dùng lần đầu. Không chạy thêm bridge cho cùng Blender qua MCP client khác cùng lúc. [Hướng dẫn bridge/add-on và telemetry](https://github.com/ahujasid/mcp-for-blender).
+
+Đổi `PORT` là đổi cổng gateway: cần thoát controller, mở lại launcher và áp dụng lại ingress. Cổng gateway/admin/metrics không được trùng cổng nội bộ đã dành cho workspace. Trang **Kết nối GPT**, **Cấu hình**, **MCP & công cụ** hiện dành cho workspace mặc định; workspace khác có URL và upstream editor trong **Workspaces**.
+
 ## Setup trên ChatGPT
 
 Trang **Kết nối GPT** cung cấp URL đang chạy và URL đã lưu. Xác nhận mật khẩu admin để xem/copy URL đầy đủ:
@@ -69,7 +88,7 @@ Bấm **Kiểm tra MCP qua domain** để initialize và list tools qua HTTPS. C
 
 Config nhạy cảm mặc định được che. Xem/copy cần xác nhận mật khẩu lại, có hiệu lực 5 phút. Các giá trị đã che không được lưu ngược vào file config. `.env` giữ các comment và key chưa biết khi cập nhật.
 
-Đổi `ADMIN_PORT` cần **Thoát ứng dụng** rồi mở launcher lại. Đổi `PORT` cần áp dụng lại ingress bằng Cloudflare wizard rồi restart. Upstream/tool/plugin thay đổi có thể cần một phiên MCP mới.
+Đổi `ADMIN_PORT` hoặc `PORT` cần **Thoát ứng dụng** rồi mở launcher lại. Khi đổi `PORT`, áp dụng lại ingress bằng Cloudflare wizard. Upstream/tool/plugin thay đổi có thể cần một phiên MCP mới.
 
 Password dùng scrypt với salt ngẫu nhiên. Cookie phiên HttpOnly, SameSite=Strict; hết hạn khi không hoạt động 30 phút hoặc sau 8 giờ. Năm lần đăng nhập sai trong 15 phút khóa 15 phút. Logout/đổi mật khẩu thu hồi phiên; CSRF và Host/Origin bảo vệ API thay đổi dữ liệu. SSE không kéo dài thời gian phiên khi chỉ để panel mở.
 

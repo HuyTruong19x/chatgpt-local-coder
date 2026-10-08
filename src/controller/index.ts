@@ -8,6 +8,7 @@ import { ConfigStore } from "./store.js";
 import { AdminAuth } from "./auth.js";
 import { Vault } from "./vault.js";
 import { Runtime, availablePort } from "./runtime.js";
+import { WorkspaceManager } from "./workspaces.js";
 import { Cloudflare } from "./cloudflare.js";
 import { createController } from "./server.js";
 import { redactText } from "../lib/redaction.js";
@@ -41,21 +42,22 @@ if (!values.MCP_TOKEN) defaults.MCP_TOKEN = randomBytes(32).toString("base64url"
 if (Object.keys(defaults).length) values = await config.save(defaults);
 for (const [key, value] of Object.entries(values)) if (!key.startsWith("OPENAI_TUNNEL_")) process.env[key] = value;
 const vault = new Vault(path.join(config.stateDir, "vault.json")); await vault.init();
-const runtime = new Runtime(config, vault);
+const workspaces = new WorkspaceManager(config, vault); await workspaces.init(); await workspaces.listen();
+const runtime = workspaces.runtime("default");
 const cloudflare = new Cloudflare(config, vault);
 let closing = false;
-const controller = await createController({ config, auth, vault, runtime, cloudflare, port, onExit: () => void close() });
+const controller = await createController({ config, auth, vault, runtime, cloudflare, workspaces, port, onExit: () => void close() });
 const server = controller.app.listen(port, "127.0.0.1", () => {
   console.log(`Panel quản lý: ${ui}`);
   open(auth.credential ? ui : `${ui}#bootstrap=${auth.bootstrap}`);
   if (!auth.credential && process.argv.includes("--no-open")) console.log("Lần đầu: chạy launcher không có --no-open để mở link tạo mật khẩu.");
-  if (auth.credential && values.CONTROLLER_AUTOSTART === "true") void runtime.request("all", "start").catch(error => runtime.log("controller", error.message));
+  if (auth.credential) void workspaces.autostart().catch(error => runtime.log("controller", error.message));
 });
 server.on("error", error => { console.error(redactText(error.message)); void close(); });
 async function close() {
   if (closing) return; closing = true;
   controller.closeEvents();
-  await runtime.close();
+  await workspaces.close();
   server.close(); server.closeAllConnections(); process.exit(0);
 }
 process.on("SIGINT", () => void close()); process.on("SIGTERM", () => void close());

@@ -21,7 +21,7 @@ export interface CodexHook {
 }
 
 const CODEX_HOME = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-const STATE_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../profiles/codex-hooks.json");
+const statePath = () => process.env.MCP_CODEX_HOOKS_STATE || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../profiles/codex-hooks.json");
 const EVENT_MAP: Record<string, HookEvent | undefined> = {
   SessionStart: "session_start",
   UserPromptSubmit: "user_prompt_submit",
@@ -73,7 +73,7 @@ async function latestPluginRoot(plugin: string): Promise<string | undefined> {
 
 export async function getCodexHooks(): Promise<CodexHook[]> {
   const { enabledPlugins, trustedHooks } = await codexConfig();
-  const state = await readJson<{ enabled?: string[]; disabled?: string[] }>(STATE_PATH, {});
+  const state = await readJson<{ enabled?: string[]; disabled?: string[] }>(statePath(), {});
   const forcedEnabled = new Set(state.enabled ?? []);
   const forcedDisabled = new Set(state.disabled ?? []);
   const found: CodexHook[] = [];
@@ -128,8 +128,8 @@ export async function saveCodexHooks(enabledIds: unknown): Promise<CodexHook[]> 
   const enabled = Array.isArray(enabledIds)
     ? [...new Set(enabledIds.filter((id): id is string => typeof id === "string" && known.has(id)))]
     : [];
-  await fs.mkdir(path.dirname(STATE_PATH), { recursive: true });
-  await fs.writeFile(STATE_PATH, JSON.stringify({ enabled, disabled: hooks.map((hook) => hook.id).filter((id) => !enabled.includes(id)) }, null, 2) + "\n");
+  await fs.mkdir(path.dirname(statePath()), { recursive: true });
+  await fs.writeFile(statePath(), JSON.stringify({ enabled, disabled: hooks.map((hook) => hook.id).filter((id) => !enabled.includes(id)) }, null, 2) + "\n");
   return getCodexHooks();
 }
 

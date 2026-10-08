@@ -7,7 +7,7 @@ export interface LocalPluginsConfig {
   computer_use?: { enabled?: boolean };
 }
 
-const configPath = () => path.resolve(process.cwd(), "profiles", "plugins.json");
+const configPath = () => process.env.MCP_PLUGINS_CONFIG || path.resolve(process.cwd(), "profiles", "plugins.json");
 
 export function getLocalPluginsConfig(): LocalPluginsConfig {
   try {
