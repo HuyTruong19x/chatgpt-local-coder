@@ -9,7 +9,7 @@ import {
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpServer } from "../server-factory.js";
 import { getUpstreamManager } from "./mcp-upstream-manager.js";
-import { refreshProxiedTools } from "./mcp-tool-proxy.js";
+import { refreshProxiedTools, hasProxiedTool } from "./mcp-tool-proxy.js";
 import { runCodexSessionStartHooks } from "./codex-hooks.js";
 
 
@@ -386,6 +386,17 @@ export function createSessionManager(config: SessionManagerConfig): SessionManag
         session.transport.sessionId || (req.headers["mcp-session-id"] as string | undefined);
       if (sid) touch(sid);
       const run = async () => {
+        const call = body as { method?: string; params?: { name?: string } } | undefined;
+        const name = call?.params?.name;
+        if (call?.method === "tools/call" && typeof name === "string" && !hasProxiedTool(session.server, name)) {
+          const manager = getUpstreamManager();
+          if (manager.listServerConfigs().some(c => c.enabled && name.startsWith(`${c.tool_prefix ?? c.id}__`))) {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await Promise.race([refreshProxiedTools(session.server, manager), new Promise<void>(resolve => { timer = setTimeout(resolve, 5000); })]);
+            } finally { clearTimeout(timer); }
+          }
+        }
         if ((body as { method?: string } | undefined)?.method === "tools/list") {
           let timer: ReturnType<typeof setTimeout> | undefined;
           try {

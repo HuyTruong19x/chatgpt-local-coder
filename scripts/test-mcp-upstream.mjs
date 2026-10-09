@@ -12,7 +12,7 @@ import {
   saveUpstreamConfig,
 } from "../dist/lib/mcp-upstream-config.js";
 import { McpUpstreamManager } from "../dist/lib/mcp-upstream-manager.js";
-import { refreshProxiedTools, jsonSchemaToZodShape } from "../dist/lib/mcp-tool-proxy.js";
+import { refreshProxiedTools, clearProxiedTools, jsonSchemaToZodShape } from "../dist/lib/mcp-tool-proxy.js";
 import { registerMcpBridgeTools } from "../dist/tools/mcp-bridge.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -199,6 +199,11 @@ try {
     if (!proxied.includes("mockhttp__add")) throw new Error(JSON.stringify(proxied));
     const names = manager.getProxiedToolNames(manager.getServerConfig("mockhttp"), await manager.listTools("mockhttp"));
     if (!names.includes("mockhttp__add")) throw new Error(JSON.stringify(names));
+    manager.registerMcpServer(hub);
+    clearProxiedTools(hub);
+    await hub._registeredTools.mcp_servers.handler({refresh:false});
+    if(!hub._registeredTools.mockhttp__add) throw new Error('mcp_servers did not recover missing proxies');
+    await manager.shutdown();
   });
 } finally {
   mockHttp.kill("SIGTERM");

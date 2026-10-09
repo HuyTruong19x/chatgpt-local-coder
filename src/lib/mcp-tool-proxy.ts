@@ -9,6 +9,10 @@ import { toolAnnotations } from "./tool-annotations.js";
 
 const proxyRegistry = new WeakMap<McpServer, Map<string, RegisteredTool>>();
 
+export function hasProxiedTool(server: McpServer, name: string): boolean {
+  return proxyRegistry.get(server)?.has(name) ?? false;
+}
+
 function getRegistry(server: McpServer): Map<string, RegisteredTool> {
   let map = proxyRegistry.get(server);
   if (!map) {

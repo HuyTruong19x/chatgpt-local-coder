@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import net from "node:net";
 import { ConfigStore, atomicJson, readJson } from "./store.js";
 import { Vault } from "./vault.js";
 import { Runtime, availablePort } from "./runtime.js";
@@ -10,11 +9,7 @@ import { TokenGateway } from "./gateway.js";
 import { rememberSecret } from "../lib/redaction.js";
 import { loadUpstreamConfig, saveUpstreamConfig, type UpstreamConfigFile } from "../lib/mcp-upstream-config.js";
 
-export interface Workspace { id: string; name: string; path: string; port: number; preset: "coding" | "blender"; autoStart: boolean }
-export const blenderUpstream = (cwd: string): UpstreamConfigFile => ({ version: 1, servers: [{
-  id: "blender", name: "Blender MCP", enabled: true, transport: "stdio", command: "uvx", args: ["mcp-for-blender"], cwd,
-  env: { BLENDER_HOST: "127.0.0.1", BLENDER_PORT: "9876", DISABLE_TELEMETRY: "true" }, tool_prefix: "blender", expose: "all",
-}] });
+export interface Workspace { id: string; name: string; path: string; port: number; preset: "coding"; autoStart: boolean }
 
 class WorkspaceConfig extends ConfigStore {
   constructor(private manager: WorkspaceManager, private workspace: Workspace) { super(manager.config.root); }
@@ -60,6 +55,17 @@ export class WorkspaceManager extends EventEmitter {
   async init(): Promise<void> {
     const values = await this.config.values(); this.defaultToken = values.MCP_TOKEN || ""; rememberSecret(this.defaultToken);
     this.records = await readJson<Workspace[]>(this.file, []);
+    // Retire the discontinued preset without deleting user project files.
+    const retired = this.records.filter(w => String(w.preset) === "blender");
+    for (const workspace of retired) {
+      if (!/^[a-f0-9-]{36}$/.test(workspace.id)) throw new Error("Workspace cũ có ID không hợp lệ");
+      await this.vault.save({ [`workspace_${workspace.id}_token`]: "" });
+      await saveUpstreamConfig({ version: 1, servers: [] }, path.join(this.directory(workspace.id), "mcp-upstream.json"));
+    }
+    if (retired.length) {
+      this.records = this.records.filter(w => String(w.preset) !== "blender");
+      await atomicJson(this.file, this.records);
+    }
     if (!this.records.length) {
       const port = await this.allocate();
       const workspace: Workspace = { id: "default", name: "Workspace hiện tại", path: path.resolve(values.WORKSPACE_PATH || this.config.root), port, preset: "coding", autoStart: values.CONTROLLER_AUTOSTART === "true" };
@@ -75,11 +81,6 @@ export class WorkspaceManager extends EventEmitter {
       ids.add(workspace.id); used.add(workspace.port); tokens.add(token); rememberSecret(token); this.attach(workspace);
     }
     if (!ids.has("default")) throw new Error("Workspace registry thiếu workspace mặc định");
-    // The requested Blender workspace is created once; launching it is an explicit panel action.
-    if (!this.records.some(w => w.preset === "blender")) {
-      const folder = path.join(this.config.stateDir, "blender-project"); await fs.mkdir(folder, { recursive: true });
-      await this.create({ name: "Blender", path: folder, preset: "blender", autoStart: false });
-    }
   }
   private async allocate(): Promise<number> {
     const values = await this.config.values(), reserved = new Set([+(values.PORT || 3000), +(values.ADMIN_PORT || 3001), +(values.CLOUDFLARED_METRICS_PORT || 20241), ...this.records.map(w => w.port)]);
@@ -94,7 +95,7 @@ export class WorkspaceManager extends EventEmitter {
       if (migrate) await fs.copyFile(source, path.join(folder, name)).catch(error => { if (error.code !== "ENOENT") throw error; });
     }
     if (!migrate || !(await fs.stat(path.join(folder, "mcp-upstream.json")).catch(() => null))) {
-      await saveUpstreamConfig(workspace.preset === "blender" ? blenderUpstream(workspace.path) : { version: 1, servers: [] }, path.join(folder, "mcp-upstream.json"));
+      await saveUpstreamConfig({ version: 1, servers: [] }, path.join(folder, "mcp-upstream.json"));
     }
     if (migrate) await fs.cp(path.resolve(this.config.root, (await this.config.values()).MCP_OAUTH_STORE || ".mcp-oauth"), path.join(folder, "oauth"), { recursive: true }).catch(error => { if (error.code !== "ENOENT") throw error; });
   }
@@ -102,27 +103,6 @@ export class WorkspaceManager extends EventEmitter {
   workspace(id: string): Workspace { const value = this.records.find(w => w.id === id); if (!value) throw Object.assign(new Error("Workspace không tồn tại"), { status: 404 }); return value; }
   list() { return this.records.map(w => ({ ...w, ...this.runtime(w.id).snapshot().mcp, tokenConfigured: !!this.token(w.id) })); }
   snapshot() { return { ...this.runtime("default").snapshot(), tunnel: this.tunnel.snapshot().tunnel, workspaces: this.list() }; }
-  async blenderSocket(id: string): Promise<{ host: string; port: number; reachable: boolean; httpEndpoint: boolean }> {
-    const upstream = await readJson<UpstreamConfigFile>(path.join(this.directory(this.workspace(id).id), "mcp-upstream.json"), { version: 1, servers: [] });
-    const blender = upstream.servers.find(s => s.id === "blender"), args = blender?.args || [];
-    const flag = (name: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : args.find(v => v.startsWith(name + "="))?.slice(name.length + 1); };
-    // Blender Lab's --host/--port control its HTTP transport, not its addon.
-    const lab = !!blender?.env?.BLENDER_MCP_HOST || !!blender?.env?.BLENDER_MCP_PORT;
-    const host = lab ? blender?.env?.BLENDER_MCP_HOST || "127.0.0.1" : flag("--host") || blender?.env?.BLENDER_HOST || "127.0.0.1";
-    const port = +(lab ? blender?.env?.BLENDER_MCP_PORT || "9876" : flag("--port") || blender?.env?.BLENDER_PORT || "9876");
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Cổng add-on Blender không hợp lệ");
-    const reachable = await new Promise<boolean>(resolve => {
-      const socket = net.connect({ host, port }); let done = false;
-      const finish = (result: boolean) => { if (done) return; done = true; socket.destroy(); resolve(result); };
-      socket.setTimeout(1500); socket.once("connect", () => finish(true)); socket.once("error", () => finish(false)); socket.once("timeout", () => finish(false));
-    });
-    // A MCP HTTP bridge can occupy the addon port and still pass a TCP check.
-    // HTTP GET cannot execute Blender code; abort promptly for a raw addon socket.
-    const httpEndpoint = reachable && await fetch(`http://${host.includes(":") ? `[${host}]` : host}:${port}/`, {
-      signal: AbortSignal.timeout(800), redirect: "manual",
-    }).then(async response => { await response.body?.cancel(); return true; }).catch(() => false);
-    return { host, port, reachable, httpEndpoint };
-  }
   async listen(): Promise<void> { this.gatewayPort = +((await this.config.values()).PORT || 3000); await this.gateway.listen(this.gatewayPort); this.ready = true; }
   async refreshDefaults(): Promise<void> {
     const values = await this.config.values(), token = values.MCP_TOKEN;
@@ -136,8 +116,8 @@ export class WorkspaceManager extends EventEmitter {
     return this.serialize(async () => {
       if (typeof input.name !== "string" || !input.name.trim() || input.name.length > 80) throw new Error("Tên workspace cần 1–80 ký tự");
       if (typeof input.path !== "string" || !path.isAbsolute(input.path) || !(await fs.stat(input.path)).isDirectory()) throw new Error("Chọn đường dẫn tuyệt đối tới thư mục dự án có sẵn");
-      if (input.preset && !["coding", "blender"].includes(input.preset)) throw new Error("Preset không hợp lệ");
-      const workspace: Workspace = { id: randomUUID(), name: input.name.trim(), path: path.resolve(input.path), port: await this.allocate(), preset: input.preset === "blender" ? "blender" : "coding", autoStart: input.autoStart === true };
+      if (input.preset && input.preset !== "coding") throw new Error("Preset không hợp lệ");
+      const workspace: Workspace = { id: randomUUID(), name: input.name.trim(), path: path.resolve(input.path), port: await this.allocate(), preset: "coding", autoStart: input.autoStart === true };
       await this.prepare(workspace); await this.vault.save({ [`workspace_${workspace.id}_token`]: randomBytes(32).toString("base64url") });
       await atomicJson(this.file, [...this.records, workspace]); this.records.push(workspace); this.attach(workspace); return workspace;
     });

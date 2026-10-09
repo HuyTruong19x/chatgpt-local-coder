@@ -371,10 +371,10 @@ export class McpUpstreamManager {
     return tools;
   }
 
-  async callTool(serverId: string, toolName: string, args: Record<string, unknown> = {}): Promise<unknown> {
+  async callTool(serverId: string, toolName: string, args: Record<string, unknown> = {}, timeoutMs?: number): Promise<unknown> {
     const conn = await this.connect(serverId);
     this.touch(conn);
-    const result = await conn.client.callTool({ name: toolName, arguments: args });
+    const result = await conn.client.callTool({ name: toolName, arguments: args }, undefined, timeoutMs ? { timeout: timeoutMs } : undefined);
     return result;
   }
 

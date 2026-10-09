@@ -136,10 +136,6 @@ export async function createController(options: ControllerOptions) {
     job(res, async () => {
       const result = await selected.rpc("POST", `/api/upstream/${encodeURIComponent(String(req.params.serverId))}/test`, {});
       if (result.status >= 400) throw new Error(JSON.stringify(redact(result.data)));
-      if (req.params.serverId === "blender") {
-        const socket = await workspaces.blenderSocket(String(req.params.id));
-        return { bridge: result.data, addonSocket: socket, guidance: socket.httpEndpoint ? "Cổng add-on đang trả HTTP: đây là HTTP server, không phải socket add-on. Chọn cổng khác cho add-on và cập nhật biến host/port của bridge." : socket.reachable ? "Cổng add-on đang nhận kết nối TCP; gọi tool đọc scene từ danh sách tool thực tế để xác nhận giao thức tương thích." : "Mở Blender và bật server của add-on; kiểm tra BLENDER_HOST/BLENDER_PORT (ahujasid) hoặc BLENDER_MCP_HOST/BLENDER_MCP_PORT (Blender Lab)." };
-      }
       return result.data;
     });
   });

@@ -156,7 +156,7 @@ Dùng `dry_run: true` để xem diff trước khi ghi.
 
 **Lần đầu:** nhập Cloudflare API token trong panel, chọn zone active và hostname. Token Cloudflare nằm trong vault Windows DPAPI. Trang Kết nối GPT cung cấp Server URL chính xác và yêu cầu xác nhận mật khẩu trước khi copy.
 
-**Nhiều workspace:** trang Workspaces quản lý các MCP runtime độc lập. Gateway tại PORT dùng chung hostname và định tuyến `/mcp/<token>` tới workspace tương ứng; không cần tạo hostname mới. Mỗi workspace có token/config/state riêng, token mới nằm trong vault DPAPI. `agent_status` trả `workspace_id` và `default_cwd`. Chọn URL của workspace Blender để dùng upstream `blender__*`; preset bridge `uvx mcp-for-blender`, add-on local mặc định 127.0.0.1:9876.
+**Nhiều workspace:** trang Workspaces quản lý các MCP runtime độc lập. Gateway tại PORT dùng chung hostname và định tuyến `/mcp/<token>` tới workspace tương ứng; không cần tạo hostname mới. Mỗi workspace có token/config/state riêng, token mới nằm trong vault DPAPI. `agent_status` trả `workspace_id` và `default_cwd`.
 
 Các script `start.ps1` / `tunnel.ps1` / `stop.ps1` mở controller. Dừng MCP/tunnel bằng panel, không kill port owner tùy ý.
 

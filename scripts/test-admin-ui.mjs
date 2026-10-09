@@ -95,12 +95,10 @@ try {
   denyCreate = false;
   await click('#cf-apply'); await until('document.querySelector("#cf-current").textContent.includes("Đã cấu hình")'); assert.equal(mutations, 4); assert.equal(await evaluate('!!document.querySelector("#cf-last-error")'), false); ok('Retry provisions mocked tunnel, ingress and DNS and clears the saved error');
   await page('workspaces', '#workspace-create');
-  assert.equal(await evaluate('document.querySelectorAll("[data-ws-edit]").length'), 2); ok('Workspaces view shows default and Blender runtimes');
-  const blenderWorkspace = workspaces.list().find(w=>w.preset === 'blender');
-  await click(`[data-ws-test="${blenderWorkspace.id}"]`); await until(`!!document.querySelector('[data-ws-result="${blenderWorkspace.id}"] .callout')`);
-  assert((await evaluate(`document.querySelector('[data-ws-result="${blenderWorkspace.id}"]').textContent`)).includes('Khởi chạy MCP')); ok('Blender test errors remain visible on the workspace card');
+  assert.equal(await evaluate('document.querySelectorAll("[data-ws-edit]").length'), 1);
+  assert.equal(await evaluate('document.querySelector("[name=preset]")'), null); ok('Workspaces view contains only coding workspaces without discontinued preset');
   await fill('#workspace-create [name="name"]', 'Browser workspace'); await fill('#workspace-create [name="path"]', scratch); await evaluate('document.querySelector("#workspace-create").requestSubmit()');
-  await until('document.querySelectorAll("[data-ws-edit]").length === 3');
+  await until('document.querySelectorAll("[data-ws-edit]").length === 2');
   const created = workspaces.list().find(w=>w.name === 'Browser workspace'); assert(created);
   await click(`[data-workspace="${created.id}"][data-ws-action="start"]`); await until(`document.querySelector('[data-workspace-state="${created.id}"]').textContent.includes('running')`);
   await click(`[data-workspace="${created.id}"][data-ws-action="stop"]`); await until(`document.querySelector('[data-workspace-state="${created.id}"]').textContent.includes('stopped')`); ok('UI creates an independent workspace and controls its runtime');

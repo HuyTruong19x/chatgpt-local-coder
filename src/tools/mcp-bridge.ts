@@ -20,6 +20,9 @@ export function registerMcpBridgeTools(server: McpServer, manager: McpUpstreamMa
     async ({ refresh }) => {
       if (refresh) await manager.reloadConfig();
       const servers = await manager.listStatuses();
+      // A bridge may become available after initial session discovery failed.
+      // Publish its tools to existing sessions without restarting the bridge.
+      if (!refresh) await manager.refreshAllProxies();
       await audit({ tool: "mcp_servers", action: "list", status: "ok", details: { count: servers.length } });
       return toolResult("mcp_servers", { servers, count: servers.length });
     }
