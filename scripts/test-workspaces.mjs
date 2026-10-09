@@ -29,12 +29,12 @@ const blender = manager.list().find(w => w.preset === 'blender');
 assert(blender); assert.notEqual(manager.token(blender.id), manager.token('default')); assert(!JSON.stringify(manager.list()).includes(manager.token(blender.id))); ok('Blender preset and distinct encrypted token; registry/list contain no credentials');
 const original = JSON.parse(await fs.readFile(path.join(manager.directory(blender.id), 'mcp-upstream.json'), 'utf8'));
 assert.equal(original.servers[0].args[0], 'mcp-for-blender'); assert.equal(original.servers[0].env.DISABLE_TELEMETRY, 'true');
-const addonPort = await freePort(), addon = net.createServer(socket => socket.end()).listen(addonPort, '127.0.0.1'); await once(addon,'listening');
+const addonPort = await freePort(), addon = net.createServer(socket => { socket.resume(); socket.end(); }).listen(addonPort, '127.0.0.1'); await once(addon,'listening');
 original.servers[0].env.BLENDER_PORT = String(addonPort);
 await fs.writeFile(path.join(blender.path, 'marker.txt'), 'BLENDER_WORKSPACE');
 // Blender bridge fixture: no package download and no real scene mutation.
 const fixture = path.join(scratch, 'mock-blender.mjs');
-await fs.writeFile(fixture, `import {McpServer} from ${JSON.stringify(pathToFileURL(path.join(root, 'node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js')).href)}; import {StdioServerTransport} from ${JSON.stringify(pathToFileURL(path.join(root, 'node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js')).href)}; const s=new McpServer({name:'mock-blender',version:'1'});s.registerTool('scene_info',{description:'Read-only test scene info',inputSchema:{}},async()=>({content:[{type:'text',text:'BLENDER_SCENE_OK'}]}));await s.connect(new StdioServerTransport());`);
+await fs.writeFile(fixture, `import {McpServer} from ${JSON.stringify(pathToFileURL(path.join(root, 'node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js')).href)}; import {StdioServerTransport} from ${JSON.stringify(pathToFileURL(path.join(root, 'node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js')).href)}; await new Promise(resolve=>setTimeout(resolve,800)); const s=new McpServer({name:'mock-blender',version:'1'});s.registerTool('scene_info',{description:'Read-only test scene info',inputSchema:{}},async()=>({content:[{type:'text',text:'BLENDER_SCENE_OK'}]}));await s.connect(new StdioServerTransport());`);
 original.servers[0].command = process.execPath; original.servers[0].args = [fixture];
 await atomicJson(path.join(manager.directory(blender.id), 'mcp-upstream.json'), original);
 const clients = [];
@@ -48,12 +48,13 @@ try {
   assert.equal((await fetch(base + '/mcp/' + manager.token('default'), { headers: { Origin: 'https://evil.test' } })).status, 403); ok('unknown token/private route denied; stopped workspace returns 503; browser origin denied');
   await Promise.all([manager.runtime('default').request('mcp','start'), manager.runtime(blender.id).request('mcp','start')]);
   const coding = await connect('default'), blend = await connect(blender.id);
+  const tools = (await blend.client.listTools()).tools;
+  assert(tools.some(t => t.name === 'blender__scene_info'), JSON.stringify({ tools: tools.map(t => t.name), logs: runtimeLogs.slice(-12) }));
+  ok('first tools/list includes Blender tools even while its bridge is starting');
   const one = await coding.client.callTool({ name: 'read_text_file', arguments: { path: 'marker.txt' } });
   const two = await blend.client.callTool({ name: 'read_text_file', arguments: { path: 'marker.txt' } });
   assert(JSON.stringify(one).includes('CODING_WORKSPACE')); assert(JSON.stringify(two).includes('BLENDER_WORKSPACE')); ok('same hostname/port routes each token to its own process and filesystem cwd');
-  let tools = []; const deadline = Date.now() + 10000;
-  do { tools = (await blend.client.listTools()).tools; if (tools.some(t => t.name === 'blender__scene_info')) break; await new Promise(resolve => setTimeout(resolve,100)); } while (Date.now() < deadline);
-  assert(tools.some(t => t.name === 'blender__scene_info'), JSON.stringify({ tools: tools.map(t => t.name), logs: runtimeLogs.slice(-12) })); assert(!(await coding.client.listTools()).tools.some(t => t.name === 'blender__scene_info'));
+  assert(!(await coding.client.listTools()).tools.some(t => t.name === 'blender__scene_info'));
   const scene = await blend.client.callTool({ name: 'blender__scene_info', arguments: {} }); assert(JSON.stringify(scene).includes('BLENDER_SCENE_OK')); ok('Blender upstream tools are exposed only in the Blender workspace');
   const cross = await fetch(base + '/mcp/' + manager.token(blender.id), { method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream','mcp-session-id':coding.transport.sessionId},body:JSON.stringify({jsonrpc:'2.0',id:7,method:'tools/list'}) });
   assert.equal(cross.status,404); ok('MCP session ID from another token cannot be recovered/adopted across workspaces');
@@ -82,6 +83,21 @@ try {
   let result; const jobDeadline = Date.now()+5000;
   do { result=await (await admin('/api/operations/'+job.operationId)).json(); if(result.state!=='running')break;await new Promise(resolve=>setTimeout(resolve,50)); } while(Date.now()<jobDeadline);
   assert.equal(result.state,'complete'); assert.equal(result.result.addonSocket.reachable,true); assert.equal(result.result.addonSocket.port,addonPort); ok('Blender diagnostic checks both the workspace bridge and configured addon socket');
+  const addonHttp = http.createServer((_req,res)=>{res.writeHead(406,{'Content-Type':'application/json'});res.end('{"error":"MCP HTTP endpoint"}');});
+  addonHttp.listen(0,'127.0.0.1'); await once(addonHttp,'listening');
+  try {
+    const labConfig = structuredClone(original);
+    labConfig.servers[0].env = {BLENDER_MCP_HOST:'127.0.0.1',BLENDER_MCP_PORT:String(addonHttp.address().port)};
+    labConfig.servers[0].args.push('--port','8000');
+    await atomicJson(path.join(manager.directory(blender.id),'mcp-upstream.json'),labConfig);
+    const socket = await manager.blenderSocket(blender.id);
+    assert.equal(socket.port,addonHttp.address().port); assert.equal(socket.httpEndpoint,true);
+    const invalidJob = await (await admin(`/api/workspaces/${blender.id}/upstream/blender/test`,'POST',{})).json();
+    let invalidResult;
+    do { invalidResult=await (await admin('/api/operations/'+invalidJob.operationId)).json(); if(invalidResult.state!=='running')break;await new Promise(resolve=>setTimeout(resolve,50)); } while(Date.now()<jobDeadline+5000);
+    assert.equal(invalidResult.state,'complete'); assert.match(invalidResult.result.guidance,/HTTP server/);
+    ok('Blender Lab socket uses BLENDER_MCP_PORT, ignores HTTP --port, and diagnoses a HTTP server occupying the addon port');
+  } finally { await atomicJson(path.join(manager.directory(blender.id),'mcp-upstream.json'),original); addonHttp.closeAllConnections(); await new Promise(resolve=>addonHttp.close(resolve)); }
   assert.equal((await admin(`/api/workspaces/${blender.id}`,'PUT',{path:project})).status,409); ok('live workspace cannot silently change its target project');
   await manager.runtime(blender.id).request('mcp','stop');
   await manager.update(blender.id,{path:project});

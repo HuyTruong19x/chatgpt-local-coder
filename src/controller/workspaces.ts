@@ -102,18 +102,26 @@ export class WorkspaceManager extends EventEmitter {
   workspace(id: string): Workspace { const value = this.records.find(w => w.id === id); if (!value) throw Object.assign(new Error("Workspace không tồn tại"), { status: 404 }); return value; }
   list() { return this.records.map(w => ({ ...w, ...this.runtime(w.id).snapshot().mcp, tokenConfigured: !!this.token(w.id) })); }
   snapshot() { return { ...this.runtime("default").snapshot(), tunnel: this.tunnel.snapshot().tunnel, workspaces: this.list() }; }
-  async blenderSocket(id: string): Promise<{ host: string; port: number; reachable: boolean }> {
+  async blenderSocket(id: string): Promise<{ host: string; port: number; reachable: boolean; httpEndpoint: boolean }> {
     const upstream = await readJson<UpstreamConfigFile>(path.join(this.directory(this.workspace(id).id), "mcp-upstream.json"), { version: 1, servers: [] });
     const blender = upstream.servers.find(s => s.id === "blender"), args = blender?.args || [];
     const flag = (name: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : args.find(v => v.startsWith(name + "="))?.slice(name.length + 1); };
-    const host = flag("--host") || blender?.env?.BLENDER_HOST || "127.0.0.1", port = +(flag("--port") || blender?.env?.BLENDER_PORT || "9876");
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("BLENDER_PORT không hợp lệ");
+    // Blender Lab's --host/--port control its HTTP transport, not its addon.
+    const lab = !!blender?.env?.BLENDER_MCP_HOST || !!blender?.env?.BLENDER_MCP_PORT;
+    const host = lab ? blender?.env?.BLENDER_MCP_HOST || "127.0.0.1" : flag("--host") || blender?.env?.BLENDER_HOST || "127.0.0.1";
+    const port = +(lab ? blender?.env?.BLENDER_MCP_PORT || "9876" : flag("--port") || blender?.env?.BLENDER_PORT || "9876");
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Cổng add-on Blender không hợp lệ");
     const reachable = await new Promise<boolean>(resolve => {
       const socket = net.connect({ host, port }); let done = false;
       const finish = (result: boolean) => { if (done) return; done = true; socket.destroy(); resolve(result); };
       socket.setTimeout(1500); socket.once("connect", () => finish(true)); socket.once("error", () => finish(false)); socket.once("timeout", () => finish(false));
     });
-    return { host, port, reachable };
+    // A MCP HTTP bridge can occupy the addon port and still pass a TCP check.
+    // HTTP GET cannot execute Blender code; abort promptly for a raw addon socket.
+    const httpEndpoint = reachable && await fetch(`http://${host.includes(":") ? `[${host}]` : host}:${port}/`, {
+      signal: AbortSignal.timeout(800), redirect: "manual",
+    }).then(async response => { await response.body?.cancel(); return true; }).catch(() => false);
+    return { host, port, reachable, httpEndpoint };
   }
   async listen(): Promise<void> { this.gatewayPort = +((await this.config.values()).PORT || 3000); await this.gateway.listen(this.gatewayPort); this.ready = true; }
   async refreshDefaults(): Promise<void> {

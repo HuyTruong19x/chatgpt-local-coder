@@ -55,6 +55,12 @@ Preset **Blender** được tạo một lần khi chuyển sang phiên bản nà
 
 Với add-on đã cài: mở Blender, bật server của add-on, bấm **Chạy** workspace Blender rồi **Kiểm tra Blender MCP**. Nếu thiếu bridge, cài uv và chạy `uvx mcp-for-blender` hoặc để uvx tải bridge khi dùng lần đầu. Không chạy thêm bridge cho cùng Blender qua MCP client khác cùng lúc. [Hướng dẫn bridge/add-on và telemetry](https://github.com/ahujasid/mcp-for-blender).
 
+**Blender Lab** là một dự án khác; add-on của nó không dùng bridge ahujasid trong preset. Với repo Blender Lab đã có ở máy, sửa cấu hình workspace: `command: "uvx"`, `args: ["--from", "D:\\Indie\\Blender\\blender_mcp\\mcp", "blender-mcp"]`, `env: { "BLENDER_MCP_HOST": "127.0.0.1", "BLENDER_MCP_PORT": "9877", "BLENDER_PATH": "<đường dẫn đầy đủ tới blender.exe>" }`. Host/port phải khớp Preferences của add-on. Cổng HTTP của bridge và socket add-on phải khác nhau; `--port` của Blender Lab chỉ chọn cổng HTTP. Tool kiểm tra scene là `blender__get_blendfile_summary_datablocks`; bản này không có `get_addon_status`. Lệnh `blender --version` không chạy khi Blender chưa có trong PATH; dùng đường dẫn đầy đủ hoặc `BLENDER_PATH` cho các tool CLI, không cần sửa PATH để dùng add-on. Xem [Blender Lab](https://www.blender.org/lab/mcp-server/).
+
+MCP initialize trả ngay; lần `tools/list` đầu chờ tối đa 5 giây để công bố tool upstream. Nếu bridge còn tải dependency hoặc chưa kết nối, dùng `mcp_servers` để xem trạng thái và tên tool thực tế rồi Refresh connector sau khi bridge sẵn sàng.
+
+Blender Lab yêu cầu **Allow Online Access** trong Blender → Preferences → System → Network; khi `bpy.app.online_access` là `False`, add-on hủy Start/Auto Start, kể cả với socket localhost. Đặt host/port trong Preferences của add-on khớp bridge, bật Auto Start và lưu Preferences nếu muốn giữ qua lần mở Blender tiếp theo. Sau khi đổi port, Stop rồi Start để socket nhận cấu hình mới. Trong Python Console của Blender, kiểm tra `bpy.app.online_access` và gọi `bpy.ops.blmcp.server_start()` để xem kết quả/lỗi trực tiếp; operator trả `{'FINISHED'}` xác nhận đã khởi chạy.
+
 Đổi `PORT` là đổi cổng gateway: cần thoát controller, mở lại launcher và áp dụng lại ingress. Cổng gateway/admin/metrics không được trùng cổng nội bộ đã dành cho workspace. Trang **Kết nối GPT**, **Cấu hình**, **MCP & công cụ** hiện dành cho workspace mặc định; workspace khác có URL và upstream editor trong **Workspaces**.
 
 ## Setup trên ChatGPT

@@ -71,6 +71,7 @@ function negotiateProtocolVersion(requested: string | undefined): string {
 export interface McpSession {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
+  upstreamReady: Promise<void>;
   lastAccessedAt: number;
   createdAt: number;
 }
@@ -228,6 +229,7 @@ export function createSessionManager(config: SessionManagerConfig): SessionManag
         sessions[sid] = {
           transport,
           server: mcpServer,
+          upstreamReady,
           lastAccessedAt: Date.now(),
           createdAt: existing?.createdAt ?? Date.now(),
         };
@@ -253,10 +255,10 @@ export function createSessionManager(config: SessionManagerConfig): SessionManag
     };
 
     await mcpServer.connect(transport);
-    // Native tools must be available immediately. Upstream discovery can spawn
-    // local processes or wait on remote MCPs, so publish it when ready instead.
-    void refreshProxiedTools(mcpServer, getUpstreamManager())
-      .then(() => mcpServer.sendToolListChanged())
+    // Initialize stays fast; the first tools/list waits briefly for discovery
+    // so clients that cache that response also receive the upstream tools.
+    const upstreamReady = refreshProxiedTools(mcpServer, getUpstreamManager())
+      .then(() => { mcpServer.sendToolListChanged(); })
       .catch((error) => console.warn("[MCP] Upstream tool refresh failed:", error));
 
     const sid = transport.sessionId ?? preferredSessionId ?? randomUUID();
@@ -264,6 +266,7 @@ export function createSessionManager(config: SessionManagerConfig): SessionManag
       sessions[sid] ?? {
         transport,
         server: mcpServer,
+        upstreamReady,
         lastAccessedAt: Date.now(),
         createdAt: Date.now(),
       }
@@ -383,6 +386,12 @@ export function createSessionManager(config: SessionManagerConfig): SessionManag
         session.transport.sessionId || (req.headers["mcp-session-id"] as string | undefined);
       if (sid) touch(sid);
       const run = async () => {
+        if ((body as { method?: string } | undefined)?.method === "tools/list") {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([session.upstreamReady, new Promise<void>(resolve => { timer = setTimeout(resolve, 5000); })]);
+          } finally { clearTimeout(timer); }
+        }
         await session.transport.handleRequest(req, res, body);
       };
       // GET mo SSE stream song lau: handleRequest chi resolve khi stream dong.
